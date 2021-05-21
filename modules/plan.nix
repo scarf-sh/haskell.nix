@@ -148,6 +148,11 @@ let
       default = (def.enableLibraryProfiling or false);
     };
 
+    enableSeparateBinOutput = mkOption {
+      type = bool;
+      default = (def.enableSeparateBinOutput or false);
+    };
+
     enableSeparateDataOutput = mkOption {
       type = bool;
       default = (def.enableSeparateDataOutput or false);

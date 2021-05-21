@@ -61,6 +61,9 @@ let self =
 # Data
 , enableSeparateDataOutput ? component.enableSeparateDataOutput
 
+# Executables
+, enableSeparateBinOutput ? component.enableSeparateBinOutput
+
 # Prelinked ghci libraries; will make iserv faster; especially for static builds.
 , enableLibraryForGhci ? true
 
@@ -136,6 +139,8 @@ let
   # From nixpkgs 20.09, the pkg-config exe has a prefix matching the ghc one
   pkgConfigHasPrefix = builtins.compareVersions lib.version "20.09pre" >= 0;
 
+  binDir = if enableSeparateBinOutput then "$bin/bin" else "$out/bin";
+
   commonConfigureFlags = ([
       # GHC
       "--with-ghc=${ghc.targetPrefix}ghc"
@@ -179,6 +184,7 @@ let
       "--ghc-option=-optl=-pthread"
       "--ghc-option=-optl=-static"
     ] ++ lib.optional enableSeparateDataOutput "--datadir=$data/share/${ghc.name}"
+      ++ lib.optional enableSeparateBinOutput "--bindir=${binDir}"
       ++ lib.optional (enableLibraryProfiling || enableExecutableProfiling) "--profiling-detail=${profilingDetail}"
       ++ lib.optional stdenv.hostPlatform.isLinux (enableFeature enableDeadCodeElimination "split-sections")
       ++ lib.optionals haskellLib.isCrossHost (
@@ -291,7 +297,7 @@ let
       srcSubDir = cleanSrc.subDir;
       srcSubDirPath = cleanSrc.root + cleanSrc.subDir;
       inherit configFiles executableToolDepends exeName enableDWARF;
-      exePath = drv + "/bin/${exeName}";
+      exePath = if enableSeparateBinOutput then drv.bin + "/${exeName}" else drv + "/${exeName}";
       env = shellWrappers;
       profiled = self (drvArgs // { enableLibraryProfiling = true; });
       dwarf = self (drvArgs // { enableDWARF = true; });
@@ -326,9 +332,13 @@ let
 
     outputs = ["out" ]
       ++ (lib.optional enableSeparateDataOutput "data")
+      ++ (lib.optional enableSeparateBinOutput "bin")
       ++ (lib.optional keepSource "source");
 
     configurePhase =
+      (lib.optionalString enableSeparateBinOutput ''
+      mkdir -p $out
+      '') +
       (lib.optionalString (!canCleanSource) ''
       echo "Cleaning component source not supported, leaving it un-cleaned"
       '') +
@@ -414,23 +424,24 @@ let
         }
       ''}
       ${(lib.optionalString (haskellLib.isTest componentId || haskellLib.isBenchmark componentId) ''
-        mkdir -p $out/bin
+        mkdir -p ${binDir}
         if [ -f ${testExecutable} ]; then
-          mkdir -p $(dirname $out/bin/${exeName})
+          mkdir -p $(dirname ${binDir}/${exeName})
           ${if stdenv.hostPlatform.isGhcjs then ''
-            cat <(echo \#!${lib.getBin buildPackages.nodejs}/bin/node) ${testExecutable} >| $out/bin/${exeName}
-            chmod +x $out/bin/${exeName}
+            cat <(echo \#!${lib.getBin buildPackages.nodejs}/bin/node) ${testExecutable} >| ${binDir}/${exeName}
+            chmod +x ${binDir}/${exeName}
           '' else ''
-             cp -r ${testExecutable} $(dirname $out/bin/${exeName})
+             cp -r ${testExecutable} $(dirname ${binDir}/${exeName})
           ''}
         fi
       '')
       # In case `setup copy` did not create this
       + (lib.optionalString enableSeparateDataOutput "mkdir -p $data")
+      + (lib.optionalString enableSeparateBinOutput "mkdir -p ${binDir}")
       + (lib.optionalString (stdenv.hostPlatform.isWindows && (haskellLib.mayHaveExecutable componentId)) (''
         echo "Symlink libffi and gmp .dlls ..."
         for p in ${lib.concatStringsSep " " [ libffi gmp ]}; do
-          find "$p" -iname '*.dll' -exec ln -s {} $out/bin \;
+          find "$p" -iname '*.dll' -exec ln -s {} ${binDir} \;
         done
         ''
         # symlink all .dlls into the local directory.
@@ -440,7 +451,7 @@ let
         echo "Symlink library dependencies..."
         for libdir in $(x86_64-pc-mingw32-ghc-pkg --package-db=$packageConfDir field "*" dynamic-library-dirs --simple-output|xargs|sed 's/ /\n/g'|sort -u); do
           if [ -d "$libdir" ]; then
-            find "$libdir" -iname '*.dll' -exec ln -s {} $out/bin \;
+            find "$libdir" -iname '*.dll' -exec ln -s {} ${binDir} \;
           fi
         done
       ''))
